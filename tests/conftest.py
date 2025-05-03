@@ -221,9 +221,10 @@ def user_token(user):
 
 @pytest.fixture
 def email_service():
-    if settings.send_real_mail == 'true':
+    if settings.send_real_mail == True:
         # Return the real email service when specifically testing email functionality
-        return EmailService()
+        template_manager = TemplateManager()
+        return EmailService(template_manager=template_manager)
     else:
         # Otherwise, use a mock to prevent actual email sending
         mock_service = AsyncMock(spec=EmailService)
