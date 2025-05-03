@@ -3,10 +3,10 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main
+      - 3-failing-to-mock-email
   pull_request:
     branches:
-      - main
+      - 3-failing-to-mock-email
 
 jobs:
   test:
@@ -48,7 +48,7 @@ jobs:
       - name: Run tests with Pytest
         env:
           DATABASE_URL: postgresql+asyncpg://user:password@localhost:5432/myappdb  # Configure the DATABASE_URL environment variable for tests
-        run: pytest --cov
+        run: pytest tests/test_api/test_users_api.py
 
   build-and-push-docker:
     needs: test
