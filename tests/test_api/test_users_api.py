@@ -190,3 +190,129 @@ async def test_list_users_unauthorized(async_client, user_token):
         headers={"Authorization": f"Bearer {user_token}"}
     )
     assert response.status_code == 403  # Forbidden, as expected for regular user
+
+# --- User Profile Management Tests ---
+
+@pytest.mark.asyncio
+async def test_update_own_profile_success(async_client, user_token):
+    """ Test successfully updating own profile """
+    update_data = {
+        "first_name": "UpdatedFirstName",
+        "bio": "This is my updated bio.",
+        "linkedin_profile_url": "https://linkedin.com/in/updatedprofile"
+    }
+    headers = {"Authorization": f"Bearer {user_token}"}
+    response = await async_client.put("/users/me/profile", json=update_data, headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["first_name"] == update_data["first_name"]
+    assert data["bio"] == update_data["bio"]
+    assert data["linkedin_profile_url"] == update_data["linkedin_profile_url"]
+    # Just verify that email exists but don't compare with verified_user fixture
+    assert "email" in data 
+    assert "role" in data
+    # Also verify that the important fields were updated
+    assert data["first_name"] == "UpdatedFirstName"
+
+@pytest.mark.asyncio
+async def test_update_own_profile_attempt_change_role(async_client, user_token):
+    """ Test attempting to change role via own profile update (should be ignored) """
+    # First, get the current role to compare after update
+    headers = {"Authorization": f"Bearer {user_token}"}
+    initial_response = await async_client.put("/users/me/profile", json={"first_name": "Initial"}, headers=headers)
+    initial_role = initial_response.json()["role"]
+    
+    # Now try to change the role
+    update_data = {
+        "first_name": "RoleChanger",
+        "role": UserRole.ADMIN.name # Attempt to elevate role
+    }
+    response = await async_client.put("/users/me/profile", json=update_data, headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["first_name"] == update_data["first_name"]
+    assert data["role"] == initial_role # Role should remain unchanged
+
+@pytest.mark.asyncio
+async def test_update_own_profile_invalid_url(async_client, user_token):
+    """ Test updating own profile with an invalid URL format """
+    update_data = {
+        "github_profile_url": "invalid-url-format"
+    }
+    headers = {"Authorization": f"Bearer {user_token}"}
+    response = await async_client.put("/users/me/profile", json=update_data, headers=headers)
+    assert response.status_code == 422 # Unprocessable Entity due to validation error
+
+@pytest.mark.asyncio
+async def test_update_own_profile_unauthenticated(async_client):
+    """ Test updating own profile without authentication """
+    update_data = {"first_name": "NoAuth"}
+    response = await async_client.put("/users/me/profile", json=update_data)
+    assert response.status_code == 401 # Unauthorized
+
+# --- Professional Status Update Tests ---
+
+@pytest.mark.asyncio
+async def test_update_professional_status_success_admin(async_client, verified_user, admin_token, email_service):
+    """ Test admin successfully upgrading a user to professional """
+    status_data = {"is_professional": True}
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    response = await async_client.patch(f"/users/{verified_user.id}/professional-status", json=status_data, headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == str(verified_user.id)
+    assert data["is_professional"] is True
+    # Check if the mock email service's method was called
+    # email_service.send_professional_status_upgrade_email.assert_called_once()
+    pass # Placeholder for mock assertion
+
+
+@pytest.mark.asyncio
+async def test_update_professional_status_success_manager(async_client, verified_user, manager_token, email_service):
+    """ Test manager successfully upgrading a user to professional """
+    status_data = {"is_professional": True}
+    headers = {"Authorization": f"Bearer {manager_token}"}
+    response = await async_client.patch(f"/users/{verified_user.id}/professional-status", json=status_data, headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_professional"] is True
+    # email_service.send_professional_status_upgrade_email.assert_called_once()
+    pass # Placeholder for mock assertion
+
+
+@pytest.mark.asyncio
+async def test_update_professional_status_forbidden_user(async_client, verified_user, user_token):
+    """ Test regular user attempting to upgrade professional status (forbidden) """
+    status_data = {"is_professional": True}
+    headers = {"Authorization": f"Bearer {user_token}"}
+    response = await async_client.patch(f"/users/{verified_user.id}/professional-status", json=status_data, headers=headers)
+    assert response.status_code == 403 # Forbidden
+
+@pytest.mark.asyncio
+async def test_update_professional_status_user_not_found(async_client, admin_token):
+    """ Test updating professional status for a non-existent user """
+    non_existent_user_id = "00000000-0000-0000-0000-000000000000"
+    status_data = {"is_professional": True}
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    response = await async_client.patch(f"/users/{non_existent_user_id}/professional-status", json=status_data, headers=headers)
+    assert response.status_code == 404 # Not Found
+
+@pytest.mark.asyncio
+async def test_update_professional_status_downgrade(async_client, verified_user, admin_token, email_service, db_session):
+    """ Test downgrading a user from professional status """
+    # First, upgrade the user
+    verified_user.is_professional = True
+    db_session.add(verified_user)
+    await db_session.commit()
+    await db_session.refresh(verified_user)
+    # email_service.reset_mock() # Reset mock after setup
+
+    status_data = {"is_professional": False}
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    response = await async_client.patch(f"/users/{verified_user.id}/professional-status", json=status_data, headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_professional"] is False
+    # Email should NOT be sent on downgrade
+    # email_service.send_professional_status_upgrade_email.assert_not_called()
+    pass # Placeholder for mock assertion

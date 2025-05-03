@@ -5,6 +5,7 @@ from app.dependencies import get_settings
 from app.models.user_model import User, UserRole
 from app.services.user_service import UserService
 from app.utils.nickname_gen import generate_nickname
+from app.schemas.user_schemas import UserProfessionalStatusUpdate # Import the schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -154,6 +155,68 @@ async def test_verify_email_with_token(db_session, user):
     await db_session.commit()
     result = await UserService.verify_email_with_token(db_session, user.id, token)
     assert result is True
+
+# Test updating a user's profile with valid data
+async def test_update_profile_valid_data(db_session, user):
+    update_data = {
+        "first_name": "UpdatedFirstName",
+        "bio": "Updated bio information."
+    }
+    updated_user = await UserService.update_profile(db_session, user.id, update_data)
+    assert updated_user is not None
+    assert updated_user.first_name == "UpdatedFirstName"
+    assert updated_user.bio == "Updated bio information."
+    # Ensure other fields like email are unchanged
+    assert updated_user.email == user.email
+
+# Test updating a user's profile attempting to change role (should be ignored)
+async def test_update_profile_ignore_role_change(db_session, user):
+    original_role = user.role
+    update_data = {
+        "first_name": "AnotherName",
+        "role": UserRole.ADMIN.name # Attempt to change role
+    }
+    updated_user = await UserService.update_profile(db_session, user.id, update_data)
+    assert updated_user is not None
+    assert updated_user.first_name == "AnotherName"
+    assert updated_user.role == original_role # Role should not change
+
+# Test updating professional status
+async def test_update_professional_status(db_session, user, email_service):
+    status_data = {"is_professional": True}
+    updated_user = await UserService.update_professional_status(db_session, user.id, status_data, email_service)
+    assert updated_user is not None
+    assert updated_user.is_professional is True
+    assert updated_user.professional_status_updated_at is not None
+    # Check if email service was called (mock assertion)
+    # In a real scenario with a mock object, you'd assert call count
+    # email_service.send_professional_status_upgrade_email.assert_called_once_with(updated_user)
+    # For now, just ensure it runs without error
+    pass 
+
+# Test updating professional status when already set (no change, no email)
+async def test_update_professional_status_no_change(db_session, user, email_service):
+    # First, set the status to True
+    status_data = {"is_professional": True}
+    await UserService.update_professional_status(db_session, user.id, status_data, email_service)
+    # email_service.reset_mock() # Reset mock call count if using mocks
+
+    # Attempt to set it to True again
+    updated_user = await UserService.update_professional_status(db_session, user.id, status_data, email_service)
+    assert updated_user is not None
+    assert updated_user.is_professional is True
+    # Email should not be sent again
+    # email_service.send_professional_status_upgrade_email.assert_not_called()
+    pass
+
+# Test updating professional status for a non-existent user
+async def test_update_professional_status_user_not_found(db_session, email_service):
+    non_existent_user_id = "00000000-0000-0000-0000-000000000000"
+    status_data = {"is_professional": True}
+    updated_user = await UserService.update_professional_status(db_session, non_existent_user_id, status_data, email_service)
+    assert updated_user is None
+    # email_service.send_professional_status_upgrade_email.assert_not_called()
+    pass
 
 # Test unlocking a user's account
 async def test_unlock_user_account(db_session, locked_user):

@@ -25,9 +25,10 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_current_user, get_db, get_email_service, require_role
+from app.models.user_model import User # Import User model
 from app.schemas.pagination_schema import EnhancedPagination
 from app.schemas.token_schema import TokenResponse
-from app.schemas.user_schemas import LoginRequest, UserBase, UserCreate, UserListResponse, UserResponse, UserUpdate
+from app.schemas.user_schemas import LoginRequest, UserBase, UserCreate, UserListResponse, UserResponse, UserUpdate, UserProfessionalStatusUpdate
 from app.services.user_service import UserService
 from app.services.jwt_service import create_access_token
 from app.utils.link_generation import create_user_links, generate_pagination_links
@@ -245,3 +246,80 @@ async def verify_email(user_id: UUID, token: str, db: AsyncSession = Depends(get
     if await UserService.verify_email_with_token(db, user_id, token):
         return {"message": "Email verified successfully"}
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification token")
+
+
+@router.put("/users/me/profile", response_model=UserResponse, name="update_own_profile", tags=["User Profile Management"])
+async def update_own_profile(
+    user_update: UserUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user) # Use get_current_user to get the actual user model
+):
+    """
+    Allows the currently authenticated user to update their own profile information.
+    Cannot update role or professional status via this endpoint.
+    """
+    user_data = user_update.model_dump(exclude_unset=True)
+    
+    # Prevent updating role or professional status through this endpoint
+    user_data.pop('role', None)
+    user_data.pop('is_professional', None)
+
+    updated_user = await UserService.update_profile(db, current_user["user_id"], user_data)
+    if not updated_user:
+        # Note: update_profile returns the user even if no changes were made, 
+        # so None typically indicates an error or user not found (which shouldn't happen here)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found or update failed")
+
+    return UserResponse.model_construct(
+        id=updated_user.id,
+        nickname=updated_user.nickname,
+        first_name=updated_user.first_name,
+        last_name=updated_user.last_name,
+        bio=updated_user.bio,
+        profile_picture_url=updated_user.profile_picture_url,
+        github_profile_url=updated_user.github_profile_url,
+        linkedin_profile_url=updated_user.linkedin_profile_url,
+        role=updated_user.role,
+        email=updated_user.email,
+        is_professional=updated_user.is_professional,
+        last_login_at=updated_user.last_login_at,
+        created_at=updated_user.created_at,
+        updated_at=updated_user.updated_at,
+        links=create_user_links(updated_user.id, request)  
+    )
+
+@router.patch("/users/{user_id}/professional-status", response_model=UserResponse, name="update_professional_status", tags=["User Management Requires (Admin or Manager Roles)"])
+async def update_user_professional_status(
+    user_id: UUID,
+    status_update: UserProfessionalStatusUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    email_service: EmailService = Depends(get_email_service),
+    current_user: dict = Depends(require_role(["ADMIN", "MANAGER"])) # Ensure only admins/managers can call
+):
+    """
+    Updates the professional status of a specific user. Requires ADMIN or MANAGER role.
+    Sends a notification email if the user is upgraded.
+    """
+    updated_user = await UserService.update_professional_status(db, user_id, status_update.model_dump(), email_service)
+    if not updated_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found or update failed")
+
+    return UserResponse.model_construct(
+        id=updated_user.id,
+        nickname=updated_user.nickname,
+        first_name=updated_user.first_name,
+        last_name=updated_user.last_name,
+        bio=updated_user.bio,
+        profile_picture_url=updated_user.profile_picture_url,
+        github_profile_url=updated_user.github_profile_url,
+        linkedin_profile_url=updated_user.linkedin_profile_url,
+        role=updated_user.role,
+        email=updated_user.email,
+        is_professional=updated_user.is_professional,
+        last_login_at=updated_user.last_login_at,
+        created_at=updated_user.created_at,
+        updated_at=updated_user.updated_at,
+        links=create_user_links(updated_user.id, request)  
+    )

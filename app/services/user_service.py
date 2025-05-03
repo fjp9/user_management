@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_email_service, get_settings
 from app.models.user_model import User
-from app.schemas.user_schemas import UserCreate, UserUpdate
+from app.schemas.user_schemas import UserCreate, UserUpdate, UserProfessionalStatusUpdate
 from app.utils.nickname_gen import generate_nickname
 from app.utils.security import generate_verification_token, hash_password, verify_password
 from uuid import UUID
@@ -100,6 +100,97 @@ class UserService:
             return None
         except Exception as e:  # Broad exception handling for debugging
             logger.error(f"Error during user update: {e}")
+            return None
+
+    @classmethod
+    async def update_profile(cls, session: AsyncSession, user_id: UUID, update_data: Dict[str, str]) -> Optional[User]:
+        """Updates user profile fields excluding role and professional status."""
+        try:
+            # Ensure role and professional status are not updated through this method
+            update_data.pop('role', None)
+            update_data.pop('is_professional', None)
+            
+            validated_data = UserUpdate(**update_data).model_dump(exclude_unset=True)
+
+            if not validated_data:
+                logger.info(f"No valid fields provided for update for user {user_id}.")
+                return await cls.get_by_id(session, user_id) # Return current user state if no valid fields
+
+            if 'password' in validated_data:
+                validated_data['hashed_password'] = hash_password(validated_data.pop('password'))
+            
+            query = update(User).where(User.id == user_id).values(**validated_data).execution_options(synchronize_session="fetch")
+            result = await cls._execute_query(session, query)
+            
+            if result and result.rowcount > 0:
+                 updated_user = await cls.get_by_id(session, user_id)
+                 if updated_user:
+                    await session.refresh(updated_user)
+                    logger.info(f"User profile {user_id} updated successfully.")
+                    return updated_user
+                 else:
+                    logger.error(f"User {user_id} not found after profile update attempt.")
+                    return None # Should ideally not happen if rowcount > 0
+            elif result is not None: # Query executed but no rows updated (e.g., user not found or data unchanged)
+                 logger.warning(f"No rows updated for user {user_id}. User might not exist or data is the same.")
+                 # Check if user exists to differentiate cases
+                 existing_user = await cls.get_by_id(session, user_id)
+                 return existing_user # Return current state
+            else: # Query execution failed
+                 logger.error(f"Failed to execute update query for user {user_id}.")
+                 return None
+
+        except ValidationError as e:
+            logger.error(f"Validation error during profile update for user {user_id}: {e}")
+            await session.rollback()
+            return None
+        except SQLAlchemyError as e:
+            logger.error(f"Database error during profile update for user {user_id}: {e}")
+            await session.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error during profile update for user {user_id}: {e}")
+            await session.rollback()
+            return None
+
+    @classmethod
+    async def update_professional_status(cls, session: AsyncSession, user_id: UUID, status_data: Dict[str, bool], email_service: EmailService) -> Optional[User]:
+        """Updates the professional status of a user."""
+        try:
+            validated_data = UserProfessionalStatusUpdate(**status_data).model_dump()
+            user = await cls.get_by_id(session, user_id)
+            if not user:
+                logger.error(f"User {user_id} not found for professional status update.")
+                return None
+
+            if user.is_professional != validated_data['is_professional']:
+                user.is_professional = validated_data['is_professional']
+                user.professional_status_updated_at = datetime.now(timezone.utc)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+                logger.info(f"Professional status for user {user_id} updated to {user.is_professional}.")
+                
+                # Send notification if upgraded to professional
+                if user.is_professional:
+                     await email_service.send_professional_status_upgrade_email(user)
+
+                return user
+            else:
+                logger.info(f"Professional status for user {user_id} is already {user.is_professional}. No update needed.")
+                return user # Return current user state
+
+        except ValidationError as e:
+            logger.error(f"Validation error during professional status update for user {user_id}: {e}")
+            await session.rollback()
+            return None
+        except SQLAlchemyError as e:
+            logger.error(f"Database error during professional status update for user {user_id}: {e}")
+            await session.rollback()
+            return None
+        except Exception as e: # Catch potential errors during email sending
+            logger.error(f"Unexpected error during professional status update or notification for user {user_id}: {e}")
+            await session.rollback() # Rollback DB changes if email fails
             return None
 
     @classmethod
