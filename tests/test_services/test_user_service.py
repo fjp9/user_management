@@ -156,6 +156,8 @@ async def test_verify_email_with_token(db_session, user):
     result = await UserService.verify_email_with_token(db_session, user.id, token)
     assert result is True
 
+# --- New Tests ---
+
 # Test updating a user's profile with valid data
 async def test_update_profile_valid_data(db_session, user):
     update_data = {

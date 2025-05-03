@@ -191,6 +191,7 @@ async def test_list_users_unauthorized(async_client, user_token):
     )
     assert response.status_code == 403  # Forbidden, as expected for regular user
 
+# --- New Tests ---
 # --- User Profile Management Tests ---
 
 @pytest.mark.asyncio
