@@ -31,7 +31,7 @@ from faker import Faker
 from app.main import app
 from app.database import Base, Database
 from app.models.user_model import User, UserRole
-from app.dependencies import get_db, get_settings
+from app.dependencies import get_db, get_settings, get_email_service
 from app.utils.security import hash_password
 from app.utils.template_manager import TemplateManager
 from app.services.email_service import EmailService
@@ -56,9 +56,10 @@ def email_service():
 
 # this is what creates the http client for your api tests
 @pytest.fixture(scope="function")
-async def async_client(db_session):
+async def async_client(db_session, email_service):
     async with AsyncClient(app=app, base_url="http://testserver") as client:
         app.dependency_overrides[get_db] = lambda: db_session
+        app.dependency_overrides[get_email_service] = lambda: email_service
         try:
             yield client
         finally:
@@ -235,6 +236,7 @@ def email_service():
     else:
         # Otherwise, use a mock to prevent actual email sending
         mock_service = AsyncMock(spec=EmailService)
-        mock_service.send_verification_email.return_value = None
-        mock_service.send_user_email.return_value = None
+        mock_service.send_verification_email.return_value = AsyncMock(return_value=None)
+        mock_service.send_user_email.return_value = AsyncMock(return_value=None)
+        mock_service.send_professional_status_upgrade_email = AsyncMock(return_value=None)
         return mock_service
